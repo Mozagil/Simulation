@@ -1,0 +1,17 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+backend/pip-install.log
+get-pip.py
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+*.log
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
