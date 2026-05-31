@@ -59,6 +59,71 @@ export interface SolveResult {
   bboxMin: [number, number, number];
   bboxMax: [number, number, number];
   filename: string;
+  analysisId?: number;
+}
+
+/** Veritabanindaki analiz ozeti (surrogate veri seti satiri). */
+export interface AnalysisSummary {
+  id: number;
+  geometryId: number;
+  filename: string;
+  createdAt: string;
+  analysisType: string;
+  status: string;
+  meshElementSize: number;
+  meshDim: number;
+  materialName: string;
+  youngsModulus: number;
+  poissonRatio: number;
+  density: number;
+  constraintCount: number;
+  loadCount: number;
+  fixedFaceIds: string;
+  loadTypes: string;
+  totalForceMag: number;
+  nodeCount: number;
+  tetCount: number;
+  maxDisp: number;
+  maxVonMises: number;
+  faceCount: number;
+  diagMm: number;
+  bboxMin: [number, number, number];
+  bboxMax: [number, number, number];
+}
+
+export interface DatasetFilterParams {
+  geometry_id?: number;
+  filename?: string;
+  analysis_type?: string;
+  material_name?: string;
+  mesh_es_min?: number;
+  mesh_es_max?: number;
+  youngs_min?: number;
+  youngs_max?: number;
+  max_disp_min?: number;
+  max_disp_max?: number;
+  max_vm_min?: number;
+  max_vm_max?: number;
+  fixed_face_id?: number;
+  load_type?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface DatasetOptions {
+  analysisTypes: string[];
+  materialNames: string[];
+  loadTypes: string[];
+}
+
+export interface GeometrySummary {
+  id: number;
+  filename: string;
+  faceCount: number;
+  triangleCount: number;
+  diagMm: number;
+  analysisCount: number;
+  createdAt: string;
 }
 
 export interface TessellationResult {

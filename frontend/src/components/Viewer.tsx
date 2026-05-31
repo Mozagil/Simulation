@@ -6,7 +6,7 @@ import { ModelView } from "./ModelView";
 import type { FaceAssignment } from "./ModelView";
 import { MeshView } from "./MeshView";
 import { ResultView } from "./ResultView";
-import type { ResultField } from "./ResultView";
+import type { ProbeInfo, ResultField, SectionAxis } from "./ResultView";
 import type { FaceGeom } from "../faceGeometry";
 
 export type BackgroundMode = "dark" | "light";
@@ -23,6 +23,14 @@ interface ViewerProps {
   solveData: SolveResult | null;
   resultField: ResultField;
   deformScale: number;
+  bands: number;
+  rangeMin: number;
+  rangeMax: number;
+  showEdges: boolean;
+  sectionAxis: SectionAxis;
+  sectionPos: number;
+  animate: boolean;
+  onProbe: (info: ProbeInfo | null) => void;
   viewMode: ViewMode;
   selectedFaceId: number | null;
   hoveredFaceId: number | null;
@@ -67,6 +75,14 @@ export function Viewer({
   solveData,
   resultField,
   deformScale,
+  bands,
+  rangeMin,
+  rangeMax,
+  showEdges,
+  sectionAxis,
+  sectionPos,
+  animate,
+  onProbe,
   viewMode,
   selectedFaceId,
   hoveredFaceId,
@@ -87,7 +103,11 @@ export function Viewer({
     <Canvas
       camera={{ position: [80, 60, 80], fov: 45 }}
       dpr={[1, 2]}
-      onPointerMissed={() => onSelectFace(null)}
+      gl={{ preserveDrawingBuffer: true }}
+      onPointerMissed={() => {
+        onSelectFace(null);
+        onProbe(null);
+      }}
     >
       <color attach="background" args={[theme.bg]} />
       <ambientLight intensity={0.6} />
@@ -97,7 +117,19 @@ export function Viewer({
       <CameraFit box={activeBox} />
 
       {showResult && solveData ? (
-        <ResultView solve={solveData} field={resultField} deformScale={deformScale} />
+        <ResultView
+          solve={solveData}
+          field={resultField}
+          deformScale={deformScale}
+          bands={bands}
+          rangeMin={rangeMin}
+          rangeMax={rangeMax}
+          showEdges={showEdges}
+          sectionAxis={sectionAxis}
+          sectionPos={sectionPos}
+          animate={animate}
+          onProbe={onProbe}
+        />
       ) : showMesh && meshData ? (
         <MeshView mesh={meshData} />
       ) : (

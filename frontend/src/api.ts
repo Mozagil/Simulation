@@ -1,4 +1,8 @@
 import type {
+  AnalysisSummary,
+  DatasetFilterParams,
+  DatasetOptions,
+  GeometrySummary,
   MeshResult,
   ModelSetup,
   SolveResult,
@@ -91,4 +95,77 @@ export async function validateModel(
     throw new Error(detail);
   }
   return (await res.json()) as ValidationResult;
+}
+
+function buildQuery(params: Record<string, string | number | undefined>): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "") q.set(k, String(v));
+  }
+  const s = q.toString();
+  return s ? `?${s}` : "";
+}
+
+export async function fetchDatasetOptions(): Promise<DatasetOptions> {
+  const res = await fetch(`${API_BASE}/dataset/options`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as DatasetOptions;
+}
+
+export async function fetchGeometries(): Promise<GeometrySummary[]> {
+  const res = await fetch(`${API_BASE}/dataset/geometries`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const body = (await res.json()) as { items: GeometrySummary[] };
+  return body.items;
+}
+
+export async function fetchAnalyses(
+  filters: DatasetFilterParams,
+): Promise<{ items: AnalysisSummary[]; total: number }> {
+  const res = await fetch(
+    `${API_BASE}/dataset/analyses${buildQuery(filters as Record<string, string | number | undefined>)}`,
+  );
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const body = (await res.json()) as { items: AnalysisSummary[]; total: number };
+  return { items: body.items, total: body.total };
+}
+
+export async function fetchAnalysisResult(id: number): Promise<SolveResult> {
+  const res = await fetch(`${API_BASE}/dataset/analyses/${id}/result`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as SolveResult;
+}
+
+export async function deleteAnalysis(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/dataset/analyses/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export function datasetExportUrl(filters: DatasetFilterParams): string {
+  return `${API_BASE}/dataset/analyses/export${buildQuery(filters as Record<string, string | number | undefined>)}`;
+}
+
+export async function runParameterSweep(
+  file: File,
+  setup: ModelSetup,
+  elementSizes: number[],
+  notes?: string,
+): Promise<{ created: { analysisId: number; elementSize: number }[]; count: number }> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("setup", JSON.stringify(setup));
+  form.append("element_sizes", JSON.stringify(elementSizes));
+  form.append("notes", notes ?? "");
+  const res = await fetch(`${API_BASE}/dataset/sweep`, { method: "POST", body: form });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = body.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as { created: { analysisId: number; elementSize: number }[]; count: number };
 }

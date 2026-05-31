@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { meshStep, midsurfaceShell, solveModel, tessellateStep, validateModel } from "./api";
+import {
+  fetchAnalysisResult,
+  meshStep,
+  midsurfaceShell,
+  runParameterSweep,
+  solveModel,
+  tessellateStep,
+  validateModel,
+} from "./api";
 import type {
   Constraint,
   Load,
@@ -12,7 +20,9 @@ import type {
 import { Viewer } from "./components/Viewer";
 import type { BackgroundMode, ViewMode } from "./components/Viewer";
 import type { FaceAssignment } from "./components/ModelView";
-import type { ResultField } from "./components/ResultView";
+import type { ProbeInfo, ResultField, SectionAxis } from "./components/ResultView";
+import { FIELD_META, fieldStats, jetColor } from "./components/ResultView";
+import { DatasetPanel } from "./components/DatasetPanel";
 import { Section } from "./components/Section";
 import { computeFaceGeometry } from "./faceGeometry";
 import "./App.css";
@@ -24,6 +34,27 @@ const MATERIAL_PRESETS: Record<string, Material> = {
 
 let _idCounter = 0;
 const nextId = (prefix: string) => `${prefix}-${Date.now()}-${_idCounter++}`;
+
+const rgbStr = (t: number) => {
+  const [r, g, b] = jetColor(t);
+  return `rgb(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)})`;
+};
+
+/** Gosterge (legend) icin CSS gradient: bands>0 ayrik bantlar, aksi halde surekli. */
+function legendCss(bands: number): string {
+  if (bands > 0) {
+    const segs: string[] = [];
+    for (let i = 0; i < bands; i++) {
+      const c = rgbStr((i + 0.5) / bands);
+      segs.push(`${c} ${((i / bands) * 100).toFixed(2)}%`, `${c} ${(((i + 1) / bands) * 100).toFixed(2)}%`);
+    }
+    return `linear-gradient(to top, ${segs.join(",")})`;
+  }
+  const segs: string[] = [];
+  const N = 24;
+  for (let i = 0; i <= N; i++) segs.push(`${rgbStr(i / N)} ${((i / N) * 100).toFixed(1)}%`);
+  return `linear-gradient(to top, ${segs.join(",")})`;
+}
 
 export default function App() {
   const [data, setData] = useState<TessellationResult | null>(null);
@@ -65,6 +96,23 @@ export default function App() {
   const [solveElementSize, setSolveElementSize] = useState<string>("");
   const [resultField, setResultField] = useState<ResultField>("vm");
   const [deformScale, setDeformScale] = useState<number>(0);
+
+  // Faz 5: sonuc son-isleme (post-processing)
+  const [bands, setBands] = useState<number>(0); // 0 = surekli
+  const [showEdges, setShowEdges] = useState<boolean>(false);
+  const [animate, setAnimate] = useState<boolean>(false);
+  const [sectionAxis, setSectionAxis] = useState<SectionAxis>("none");
+  const [sectionPos, setSectionPos] = useState<number>(50); // %
+  const [rangeMode, setRangeMode] = useState<"auto" | "manual">("auto");
+  const [rangeMinStr, setRangeMinStr] = useState<string>("");
+  const [rangeMaxStr, setRangeMaxStr] = useState<string>("");
+  const [probe, setProbe] = useState<ProbeInfo | null>(null);
+
+  // Veri seti (surrogate / DB)
+  const [datasetRefresh, setDatasetRefresh] = useState(0);
+  const [lastAnalysisId, setLastAnalysisId] = useState<number | null>(null);
+  const [sweepSizes, setSweepSizes] = useState<string>("4, 8, 16");
+  const [sweeping, setSweeping] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const faceListRef = useRef<HTMLUListElement>(null);
@@ -141,12 +189,56 @@ export default function App() {
       );
       setSolveData(result);
       setViewMode("result");
+      if (result.analysisId != null) {
+        setLastAnalysisId(result.analysisId);
+        setDatasetRefresh((k) => k + 1);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Cozum hatasi");
     } finally {
       setSolving(false);
     }
   }, [file, material, constraints, loads, solveElementSize]);
+
+  const handleSweep = useCallback(async () => {
+    if (!file) return;
+    if (constraints.length === 0) {
+      setError("Parametre taramasi icin en az bir mesnet gerekli.");
+      return;
+    }
+    const sizes = sweepSizes
+      .split(/[,;\s]+/)
+      .map((s) => parseFloat(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (sizes.length === 0) {
+      setError("Gecerli eleman boyutlari girin (ornek: 4, 8, 16).");
+      return;
+    }
+    setSweeping(true);
+    setError(null);
+    try {
+      const out = await runParameterSweep(file, { material, constraints, loads }, sizes);
+      setDatasetRefresh((k) => k + 1);
+      if (out.created.length > 0) {
+        const last = out.created[out.created.length - 1];
+        setLastAnalysisId(last.analysisId);
+        const full = await fetchAnalysisResult(last.analysisId);
+        setSolveData({ ...full, filename: file.name, analysisId: last.analysisId });
+        setViewMode("result");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Tarama hatasi");
+    } finally {
+      setSweeping(false);
+    }
+  }, [file, material, constraints, loads, sweepSizes]);
+
+  const handleLoadSavedResult = useCallback((result: SolveResult) => {
+    setSolveData(result);
+    setViewMode("result");
+    setLastAnalysisId(result.analysisId ?? null);
+    setError(null);
+  }, []);
 
   const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -177,6 +269,56 @@ export default function App() {
     for (const c of constraints) m.set(c.face_id, "fixed");
     return m;
   }, [constraints, loads]);
+
+  const fieldMeta = FIELD_META[resultField];
+
+  // Secili alanin otomatik min/max'i
+  const autoStats = useMemo(
+    () => (solveData ? fieldStats(solveData, resultField) : { min: 0, max: 1 }),
+    [solveData, resultField],
+  );
+
+  // Etkin renk araligi (otomatik veya manuel)
+  const range = useMemo(() => {
+    if (rangeMode === "manual") {
+      const mn = parseFloat(rangeMinStr);
+      const mx = parseFloat(rangeMaxStr);
+      const lo = Number.isFinite(mn) ? mn : autoStats.min;
+      const hi = Number.isFinite(mx) ? mx : autoStats.max;
+      return hi > lo ? { min: lo, max: hi } : autoStats;
+    }
+    return autoStats;
+  }, [rangeMode, rangeMinStr, rangeMaxStr, autoStats]);
+
+  // Gosterge tik degerleri (ust = max, alt = min)
+  const legendTicks = useMemo(() => {
+    const NT = 4;
+    const out: number[] = [];
+    for (let i = 0; i <= NT; i++) out.push(range.max - ((range.max - range.min) * i) / NT);
+    return out;
+  }, [range]);
+
+  // Alan / cozum degisince prob okumasini temizle
+  useEffect(() => {
+    setProbe(null);
+  }, [resultField, solveData]);
+
+  const enableManualRange = useCallback(() => {
+    setRangeMinStr(autoStats.min.toFixed(fieldMeta.decimals));
+    setRangeMaxStr(autoStats.max.toFixed(fieldMeta.decimals));
+    setRangeMode("manual");
+  }, [autoStats, fieldMeta.decimals]);
+
+  const handleScreenshot = useCallback(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>(".viewport canvas");
+    if (!canvas) return;
+    const url = canvas.toDataURL("image/png");
+    const a = document.createElement("a");
+    const stem = (solveData?.filename ?? "sonuc").replace(/\.[^.]+$/, "");
+    a.href = url;
+    a.download = `${stem}_${resultField}.png`;
+    a.click();
+  }, [solveData, resultField]);
 
   // Viewport'ta hover edilen yuzeyi yuzey listesinde gorunur kil
   useEffect(() => {
@@ -316,16 +458,28 @@ export default function App() {
             </div>
           )}
           {viewMode === "result" && solveData && (
-            <div className="result-bar">
-              <span className="rb-title">
-                {resultField === "vm" ? "von Mises [MPa]" : "Deplasman [mm]"}
-              </span>
-              <span className="rb-min">0</span>
-              <i className="rb-scale" />
-              <span className="rb-max">
-                {(resultField === "vm" ? solveData.maxVonMises : solveData.maxDisp).toFixed(
-                  resultField === "vm" ? 1 : 3,
-                )}
+            <div className="post-legend">
+              <div className="pl-title">
+                {fieldMeta.label}
+                <span className="pl-unit">[{fieldMeta.unit}]</span>
+              </div>
+              <div className="pl-row">
+                <div className="pl-bar" style={{ background: legendCss(bands) }} />
+                <div className="pl-ticks">
+                  {legendTicks.map((v, i) => (
+                    <span key={i}>{v.toFixed(fieldMeta.decimals)}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          {viewMode === "result" && probe && (
+            <div className="probe-box">
+              <strong>
+                {fieldMeta.label}: {probe.value.toFixed(fieldMeta.decimals)} {fieldMeta.unit}
+              </strong>
+              <span className="muted">
+                x {probe.x.toFixed(1)} · y {probe.y.toFixed(1)} · z {probe.z.toFixed(1)}
               </span>
             </div>
           )}
@@ -335,6 +489,14 @@ export default function App() {
             solveData={solveData}
             resultField={resultField}
             deformScale={deformScale}
+            bands={bands}
+            rangeMin={range.min}
+            rangeMax={range.max}
+            showEdges={showEdges}
+            sectionAxis={sectionAxis}
+            sectionPos={sectionPos / 100}
+            animate={animate}
+            onProbe={setProbe}
             viewMode={viewMode}
             selectedFaceId={selectedFaceId}
             hoveredFaceId={hoveredFaceId}
@@ -347,7 +509,7 @@ export default function App() {
           />
         </main>
 
-        <aside className="panel">
+        <aside className="panel wide">
           {!data && <p className="muted empty-note">Model yuklenmedi. Bir STEP dosyasi ice aktarin.</p>}
 
           {data && (
@@ -566,12 +728,18 @@ export default function App() {
                       <div><dt>Maks. deplasman</dt><dd>{solveData.maxDisp.toFixed(4)} mm</dd></div>
                       <div><dt>Maks. von Mises</dt><dd>{solveData.maxVonMises.toFixed(1)} MPa</dd></div>
                       <div><dt>Eleman boyutu</dt><dd>{solveData.elementSize.toFixed(2)} mm</dd></div>
+                      {lastAnalysisId != null && (
+                        <div><dt>Veritabani ID</dt><dd>#{lastAnalysisId}</dd></div>
+                      )}
                     </dl>
                     <label className="field">
                       <span>Sonuc alani</span>
                       <select value={resultField} onChange={(e) => setResultField(e.target.value as ResultField)}>
                         <option value="vm">von Mises gerilme</option>
-                        <option value="disp">Deplasman buyuklugu</option>
+                        <option value="disp">Deplasman buyuklugu |U|</option>
+                        <option value="ux">Deplasman Ux</option>
+                        <option value="uy">Deplasman Uy</option>
+                        <option value="uz">Deplasman Uz</option>
                       </select>
                     </label>
                     <label className="field">
@@ -579,8 +747,104 @@ export default function App() {
                       <input type="range" min={0} max={200} step={1} value={deformScale}
                         onChange={(e) => setDeformScale(Number(e.target.value))} />
                     </label>
+
+                    <h3>Son Isleme (Post)</h3>
+                    <label className="field">
+                      <span>Kontur bandi</span>
+                      <select value={bands} onChange={(e) => setBands(Number(e.target.value))}>
+                        <option value={0}>Surekli (smooth)</option>
+                        <option value={8}>8 bant</option>
+                        <option value={12}>12 bant</option>
+                        <option value={16}>16 bant</option>
+                        <option value={24}>24 bant</option>
+                      </select>
+                    </label>
+
+                    <label className="field">
+                      <span>Renk araligi</span>
+                      <select
+                        value={rangeMode}
+                        onChange={(e) => (e.target.value === "manual" ? enableManualRange() : setRangeMode("auto"))}
+                      >
+                        <option value="auto">Otomatik (min–max)</option>
+                        <option value="manual">Manuel</option>
+                      </select>
+                    </label>
+                    {rangeMode === "manual" && (
+                      <div className="row3" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                        <label className="field">
+                          <span>Min</span>
+                          <input type="number" value={rangeMinStr} onChange={(e) => setRangeMinStr(e.target.value)} />
+                        </label>
+                        <label className="field">
+                          <span>Max</span>
+                          <input type="number" value={rangeMaxStr} onChange={(e) => setRangeMaxStr(e.target.value)} />
+                        </label>
+                      </div>
+                    )}
+
+                    <label className="field">
+                      <span>Kesit (clip) ekseni</span>
+                      <select value={sectionAxis} onChange={(e) => setSectionAxis(e.target.value as SectionAxis)}>
+                        <option value="none">Kapali</option>
+                        <option value="x">X ekseni</option>
+                        <option value="y">Y ekseni</option>
+                        <option value="z">Z ekseni</option>
+                      </select>
+                    </label>
+                    {sectionAxis !== "none" && (
+                      <label className="field">
+                        <span>Kesit konumu: %{sectionPos}</span>
+                        <input type="range" min={0} max={100} step={1} value={sectionPos}
+                          onChange={(e) => setSectionPos(Number(e.target.value))} />
+                      </label>
+                    )}
+
+                    <div className="post-toggles">
+                      <label className="chk">
+                        <input type="checkbox" checked={showEdges} onChange={(e) => setShowEdges(e.target.checked)} />
+                        Mesh kenarlari
+                      </label>
+                      <label className="chk">
+                        <input type="checkbox" checked={animate} onChange={(e) => setAnimate(e.target.checked)} />
+                        Deformasyon animasyonu
+                      </label>
+                    </div>
+                    {animate && deformScale === 0 && (
+                      <p className="muted hint-small">Animasyon icin deformasyon olcegini artirin.</p>
+                    )}
+
+                    <button className="btn full" onClick={handleScreenshot}>Goruntuyu Kaydet (PNG)</button>
+                    <p className="muted hint-small">
+                      Viewport'ta sonuca tiklayarak o noktadaki degeri okuyabilirsiniz (prob).
+                    </p>
                   </>
                 )}
+
+                <h3>Surrogate veri (parametre taramasi)</h3>
+                <label className="field">
+                  <span>Eleman boyutlari (mm, virgulle)</span>
+                  <input
+                    type="text"
+                    value={sweepSizes}
+                    onChange={(e) => setSweepSizes(e.target.value)}
+                    placeholder="4, 8, 16"
+                  />
+                </label>
+                <button
+                  className="btn full"
+                  onClick={handleSweep}
+                  disabled={sweeping || !file || constraints.length === 0}
+                >
+                  {sweeping ? "Taraniyor..." : "Mesh h Taramasi (DB'ye kaydet)"}
+                </button>
+                <p className="muted hint-small">
+                  Ayni geometri + BC ile birden fazla mesh boyutunda cozer; surrogate regression icin veri seti olusturur.
+                </p>
+              </Section>
+
+              <Section title="Veri Seti" badge={datasetRefresh > 0 ? "●" : undefined} defaultOpen={false}>
+                <DatasetPanel refreshKey={datasetRefresh} onLoadResult={handleLoadSavedResult} />
               </Section>
 
               <Section title="Yuzey Listesi" badge={data.faceCount} defaultOpen={false}>
