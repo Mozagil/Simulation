@@ -30,6 +30,7 @@ interface ViewerProps {
   sectionAxis: SectionAxis;
   sectionPos: number;
   animate: boolean;
+  frameIndex: number;
   onProbe: (info: ProbeInfo | null) => void;
   viewMode: ViewMode;
   selectedFaceId: number | null;
@@ -82,6 +83,7 @@ export function Viewer({
   sectionAxis,
   sectionPos,
   animate,
+  frameIndex,
   onProbe,
   viewMode,
   selectedFaceId,
@@ -128,6 +130,7 @@ export function Viewer({
           sectionAxis={sectionAxis}
           sectionPos={sectionPos}
           animate={animate}
+          frameIndex={frameIndex}
           onProbe={onProbe}
         />
       ) : showMesh && meshData ? (

@@ -4,7 +4,10 @@ import type {
   DatasetOptions,
   GeometrySummary,
   MeshResult,
+  KeywordBlock,
+  KeywordTemplate,
   ModelSetup,
+  OpenRadiossStatus,
   SolveResult,
   TessellationResult,
   ValidationResult,
@@ -168,4 +171,75 @@ export async function runParameterSweep(
     throw new Error(detail);
   }
   return (await res.json()) as { created: { analysisId: number; elementSize: number }[]; count: number };
+}
+
+export async function fetchExplicitStatus(): Promise<OpenRadiossStatus> {
+  const res = await fetch(`${API_BASE}/explicit/status`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as OpenRadiossStatus;
+}
+
+export async function fetchKeywordTemplates(): Promise<KeywordTemplate[]> {
+  const res = await fetch(`${API_BASE}/keywords/templates`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const body = (await res.json()) as { items: KeywordTemplate[] };
+  return body.items;
+}
+
+export async function composeKeywords(blocks: KeywordBlock[]): Promise<{ deck: string }> {
+  const res = await fetch(`${API_BASE}/keywords/compose`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ blocks }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as { deck: string };
+}
+
+export async function generateKeywords(
+  file: File,
+  setup: ModelSetup,
+  elementSize: number,
+  runName: string,
+): Promise<{
+  deck: string;
+  blocks: KeywordBlock[];
+  nodeCount: number;
+  tetCount: number;
+}> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("setup", JSON.stringify(setup));
+  form.append("element_size", String(elementSize));
+  form.append("run_name", runName);
+  return postForm("/keywords/generate", form);
+}
+
+export async function downloadKeywordsRad(blocks: KeywordBlock[], filename: string) {
+  const res = await fetch(`${API_BASE}/keywords/export`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ blocks }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  const blob = new Blob([text], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function runExplicit(
+  file: File,
+  setup: ModelSetup,
+  elementSize: number,
+): Promise<SolveResult> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("setup", JSON.stringify(setup));
+  form.append("element_size", String(elementSize));
+  return postForm<SolveResult>("/explicit/run", form);
 }

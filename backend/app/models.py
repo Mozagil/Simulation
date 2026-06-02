@@ -36,10 +36,42 @@ class Load(BaseModel):
     fz: float = 0.0
 
 
+class ExplicitParams(BaseModel):
+    """OpenRadioss explicit dynamics parametreleri (Faz 6)."""
+
+    end_time_ms: float = Field(1.0, gt=0, description="Simulasyon suresi [ms]")
+    dt_ms: float | None = Field(None, gt=0, description="Sabit zaman adimi [ms]; None=otomatik")
+    initial_velocity: list[float] = Field(
+        default_factory=lambda: [0.0, 0.0, -5.0],
+        min_length=3,
+        max_length=3,
+        description="Baslangic hizi [mm/ms] (= m/s)",
+    )
+    gravity: float = Field(0.0, description="Yercekimi ivmesi [mm/ms^2]; 9810 ~ 9.81 m/s^2")
+    threads: int = Field(4, ge=1, le=64)
+    output_frames: int = Field(20, ge=2, le=200, description="Animasyon kare sayisi hedefi")
+
+
+class KeywordBlock(BaseModel):
+    """OpenRadioss Starter keyword blogu (duzenlenebilir metin)."""
+
+    id: str
+    name: str
+    category: str = "custom"
+    enabled: bool = True
+    lines: str
+
+
+class KeywordComposeRequest(BaseModel):
+    blocks: list[KeywordBlock] = Field(default_factory=list)
+
+
 class ModelSetup(BaseModel):
     material: Material
     constraints: list[Constraint] = Field(default_factory=list)
     loads: list[Load] = Field(default_factory=list)
+    explicit: ExplicitParams | None = None
+    keyword_blocks: list[KeywordBlock] = Field(default_factory=list)
 
 
 class ValidationResult(BaseModel):

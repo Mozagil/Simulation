@@ -655,3 +655,105 @@
 .panel.wide {
   width: 380px;
 }
+
+/* Radioss keyword editor */
+.keyword-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.keyword-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.keyword-toolbar .field {
+  flex: 1;
+  min-width: 100px;
+}
+
+.keyword-split {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+}
+
+.keyword-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 140px;
+  overflow-y: auto;
+  border: 1px solid #2f3848;
+  border-radius: 8px;
+}
+
+.keyword-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  border-bottom: 1px solid #20262f;
+}
+
+.keyword-list li.off {
+  opacity: 0.45;
+}
+
+.keyword-list li:hover {
+  background: #233248;
+}
+
+.keyword-list li.active {
+  background: #3a2f17;
+}
+
+.keyword-list .kw-name {
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.keyword-list .kw-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.keyword-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 120px;
+}
+
+.keyword-textarea,
+.keyword-preview {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  background: #0f1218;
+  border: 1px solid #2f3848;
+  border-radius: 6px;
+  color: #d4dae6;
+  padding: 8px;
+  resize: vertical;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.keyword-textarea {
+  min-height: 100px;
+}
+
+.keyword-preview {
+  min-height: 80px;
+  max-height: 160px;
+}

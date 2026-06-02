@@ -14,6 +14,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from .analysis_routes import router as dataset_router
+from .explicit_routes import router as explicit_router
+from .keyword_routes import router as keyword_router
 from .analysis_store import save_analysis_run
 from .database import init_db
 from .step_loader import load_step_tessellation
@@ -33,6 +35,8 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Crash Sim Platform API", version="0.2.0", lifespan=lifespan)
 app.include_router(dataset_router)
+app.include_router(explicit_router)
+app.include_router(keyword_router)
 
 app.add_middleware(
     CORSMiddleware,

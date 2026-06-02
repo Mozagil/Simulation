@@ -74,6 +74,7 @@ interface ResultViewProps {
   sectionAxis: SectionAxis;
   sectionPos: number; // 0..1 (normalize konum)
   animate: boolean;
+  frameIndex?: number;
   onProbe?: (info: ProbeInfo | null) => void;
 }
 
@@ -88,9 +89,23 @@ export function ResultView({
   sectionAxis,
   sectionPos,
   animate,
+  frameIndex = 0,
   onProbe,
 }: ResultViewProps) {
   const { gl } = useThree();
+
+  const activeSolve = useMemo(() => {
+    const frames = solve.frames;
+    if (!frames?.length) return solve;
+    const f = frames[Math.min(frameIndex, frames.length - 1)];
+    return {
+      ...solve,
+      positions: f.positions,
+      disp: f.disp,
+      dispMag: f.dispMag,
+      vonMises: f.vonMises,
+    };
+  }, [solve, frameIndex]);
 
   useEffect(() => {
     gl.localClippingEnabled = true;
@@ -104,18 +119,19 @@ export function ResultView({
 
   // Temel pozisyonlar (deformasyonsuz) + deplasman vektoru
   const base = useMemo(() => {
-    const basePos = new Float32Array(solve.positions);
-    const dispArr = new Float32Array(solve.disp);
+    const ref = solve.frames?.length ? solve.frames[0] : solve;
+    const basePos = new Float32Array(ref.positions);
+    const dispArr = new Float32Array(activeSolve.disp);
     return { basePos, dispArr };
-  }, [solve]);
+  }, [solve, activeSolve]);
 
   // Secili alanin dugum-bazli skaler degerleri
   const scalar = useMemo(() => {
-    const n = solve.positions.length / 3;
+    const n = activeSolve.positions.length / 3;
     const s = new Float32Array(n);
-    for (let i = 0; i < n; i++) s[i] = getScalar(solve, field, i);
+    for (let i = 0; i < n; i++) s[i] = getScalar(activeSolve, field, i);
     return s;
-  }, [solve, field]);
+  }, [activeSolve, field]);
 
   const geometry = useMemo(() => {
     const g = new THREE.BufferGeometry();
@@ -148,7 +164,9 @@ export function ResultView({
   // Deformasyon (statik olcek veya animasyon) - her karede uygulanir
   const lastScale = useRef<number>(Number.NaN);
   useFrame((state) => {
-    const factor = animate ? 0.5 - 0.5 * Math.cos(state.clock.elapsedTime * 2.5) : 1;
+    const hasFrames = (solve.frames?.length ?? 0) > 1;
+    const factor =
+      animate && !hasFrames ? 0.5 - 0.5 * Math.cos(state.clock.elapsedTime * 2.5) : 1;
     const eff = deformScale * factor;
     if (!animate && eff === lastScale.current) return;
     lastScale.current = eff;

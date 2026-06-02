@@ -28,10 +28,45 @@ export interface Load {
   fz: number; // force [N]
 }
 
+export interface ExplicitParams {
+  end_time_ms: number;
+  dt_ms?: number | null;
+  initial_velocity: [number, number, number];
+  gravity: number;
+  threads: number;
+  output_frames: number;
+}
+
+export interface KeywordBlock {
+  id: string;
+  name: string;
+  category: string;
+  enabled: boolean;
+  lines: string;
+}
+
+export interface KeywordTemplate {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  lines: string;
+}
+
 export interface ModelSetup {
   material: Material;
   constraints: Constraint[];
   loads: Load[];
+  explicit?: ExplicitParams;
+  keyword_blocks?: KeywordBlock[];
+}
+
+export interface ExplicitFrame {
+  timeMs: number;
+  positions: number[];
+  disp: number[];
+  dispMag: number[];
+  vonMises: number[];
 }
 
 export interface ValidationResult {
@@ -60,6 +95,16 @@ export interface SolveResult {
   bboxMax: [number, number, number];
   filename: string;
   analysisId?: number;
+  analysisType?: string;
+  frames?: ExplicitFrame[];
+  runLogs?: string[];
+}
+
+export interface OpenRadiossStatus {
+  installed: boolean;
+  message?: string;
+  install_hint?: string;
+  path?: string;
 }
 
 /** Veritabanindaki analiz ozeti (surrogate veri seti satiri). */

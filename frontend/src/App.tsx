@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchAnalysisResult,
+  fetchExplicitStatus,
   meshStep,
   midsurfaceShell,
+  runExplicit,
   runParameterSweep,
   solveModel,
   tessellateStep,
@@ -10,9 +12,12 @@ import {
 } from "./api";
 import type {
   Constraint,
+  ExplicitParams,
+  KeywordBlock,
   Load,
   Material,
   MeshResult,
+  OpenRadiossStatus,
   SolveResult,
   TessellationResult,
   ValidationResult,
@@ -23,6 +28,7 @@ import type { FaceAssignment } from "./components/ModelView";
 import type { ProbeInfo, ResultField, SectionAxis } from "./components/ResultView";
 import { FIELD_META, fieldStats, jetColor } from "./components/ResultView";
 import { DatasetPanel } from "./components/DatasetPanel";
+import { KeywordPanel } from "./components/KeywordPanel";
 import { Section } from "./components/Section";
 import { computeFaceGeometry } from "./faceGeometry";
 import "./App.css";
@@ -113,6 +119,20 @@ export default function App() {
   const [lastAnalysisId, setLastAnalysisId] = useState<number | null>(null);
   const [sweepSizes, setSweepSizes] = useState<string>("4, 8, 16");
   const [sweeping, setSweeping] = useState(false);
+
+  // Faz 6: OpenRadioss explicit
+  const [orStatus, setOrStatus] = useState<OpenRadiossStatus | null>(null);
+  const [expliciting, setExpliciting] = useState(false);
+  const [explicitParams, setExplicitParams] = useState<ExplicitParams>({
+    end_time_ms: 1.0,
+    initial_velocity: [0, 0, -5],
+    gravity: 0,
+    threads: 4,
+    output_frames: 20,
+  });
+  const [frameIndex, setFrameIndex] = useState(0);
+  const [framePlaying, setFramePlaying] = useState(false);
+  const [keywordBlocks, setKeywordBlocks] = useState<KeywordBlock[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const faceListRef = useRef<HTMLUListElement>(null);
@@ -237,8 +257,51 @@ export default function App() {
     setSolveData(result);
     setViewMode("result");
     setLastAnalysisId(result.analysisId ?? null);
+    setFrameIndex(0);
     setError(null);
   }, []);
+
+  useEffect(() => {
+    fetchExplicitStatus().then(setOrStatus).catch(() => setOrStatus({ installed: false }));
+  }, []);
+
+  useEffect(() => {
+    if (!framePlaying || !solveData?.frames?.length) return;
+    const id = window.setInterval(() => {
+      setFrameIndex((i) => (i + 1) % (solveData.frames?.length ?? 1));
+    }, 120);
+    return () => clearInterval(id);
+  }, [framePlaying, solveData?.frames?.length]);
+
+  const handleExplicit = useCallback(async () => {
+    if (!file) return;
+    if (constraints.length === 0) {
+      setError("Explicit icin en az bir sabit mesnet gerekli.");
+      return;
+    }
+    setExpliciting(true);
+    setError(null);
+    try {
+      const size = solveElementSize ? parseFloat(solveElementSize) : 0;
+      const result = await runExplicit(
+        file,
+        { material, constraints, loads, explicit: explicitParams, keyword_blocks: keywordBlocks },
+        Number.isFinite(size) ? size : 0,
+      );
+      setSolveData(result);
+      setViewMode("result");
+      setFrameIndex(0);
+      setDeformScale(1);
+      if (result.analysisId != null) {
+        setLastAnalysisId(result.analysisId);
+        setDatasetRefresh((k) => k + 1);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Explicit hatasi");
+    } finally {
+      setExpliciting(false);
+    }
+  }, [file, material, constraints, loads, explicitParams, keywordBlocks, solveElementSize]);
 
   const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -400,7 +463,7 @@ export default function App() {
           <span className="brand-mark">▣</span>
           <div>
             <h1>Crash CAE</h1>
-            <p>STEP · Mesh · Sinir Kosullari</p>
+            <p>STEP · Mesh · Statik · Explicit</p>
           </div>
         </div>
 
@@ -497,6 +560,7 @@ export default function App() {
             sectionPos={sectionPos / 100}
             animate={animate}
             onProbe={setProbe}
+            frameIndex={frameIndex}
             viewMode={viewMode}
             selectedFaceId={selectedFaceId}
             hoveredFaceId={hoveredFaceId}
@@ -814,6 +878,32 @@ export default function App() {
                       <p className="muted hint-small">Animasyon icin deformasyon olcegini artirin.</p>
                     )}
 
+                    {(solveData.frames?.length ?? 0) > 1 && (
+                      <>
+                        <label className="field">
+                          <span>
+                            Zaman karesi: {frameIndex + 1} / {solveData.frames!.length}
+                            {solveData.frames![frameIndex]?.timeMs != null &&
+                              ` (${solveData.frames![frameIndex].timeMs.toFixed(2)} ms)`}
+                          </span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={solveData.frames!.length - 1}
+                            step={1}
+                            value={frameIndex}
+                            onChange={(e) => setFrameIndex(Number(e.target.value))}
+                          />
+                        </label>
+                        <button
+                          className="btn full"
+                          onClick={() => setFramePlaying((p) => !p)}
+                        >
+                          {framePlaying ? "Animasyonu Durdur" : "Zaman Animasyonu Oynat"}
+                        </button>
+                      </>
+                    )}
+
                     <button className="btn full" onClick={handleScreenshot}>Goruntuyu Kaydet (PNG)</button>
                     <p className="muted hint-small">
                       Viewport'ta sonuca tiklayarak o noktadaki degeri okuyabilirsiniz (prob).
@@ -841,6 +931,120 @@ export default function App() {
                 <p className="muted hint-small">
                   Ayni geometri + BC ile birden fazla mesh boyutunda cozer; surrogate regression icin veri seti olusturur.
                 </p>
+              </Section>
+
+              <Section title="Radioss Keyword" badge={keywordBlocks.length || undefined} defaultOpen={false}>
+                <KeywordPanel
+                  file={file}
+                  material={material}
+                  constraints={constraints}
+                  loads={loads}
+                  explicit={explicitParams}
+                  solveElementSize={solveElementSize}
+                  onBlocksChange={setKeywordBlocks}
+                />
+              </Section>
+
+              <Section title="Explicit (OpenRadioss)" defaultOpen={false}>
+                {orStatus && !orStatus.installed && (
+                  <p className="muted hint-small">
+                    OpenRadioss bulunamadi.{" "}
+                    <a href="https://github.com/OpenRadioss/OpenRadioss/releases" target="_blank" rel="noreferrer">
+                      Indir
+                    </a>
+                    {" "}sonra OPENRADIOSS_PATH ortam degiskenini ayarlayin.
+                  </p>
+                )}
+                {orStatus?.installed && (
+                  <p className="muted hint-small">Kurulu: {orStatus.path}</p>
+                )}
+                <div className="mesh-controls">
+                  <label className="field">
+                    <span>Bitis suresi [ms]</span>
+                    <input
+                      type="number"
+                      min={0.01}
+                      step={0.1}
+                      value={explicitParams.end_time_ms}
+                      onChange={(e) =>
+                        setExplicitParams((p) => ({
+                          ...p,
+                          end_time_ms: parseFloat(e.target.value) || 1,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Baslangic hizi [mm/ms] (x,y,z)</span>
+                    <div className="assign-row force">
+                      <input
+                        type="number"
+                        value={explicitParams.initial_velocity[0]}
+                        onChange={(e) =>
+                          setExplicitParams((p) => ({
+                            ...p,
+                            initial_velocity: [
+                              parseFloat(e.target.value) || 0,
+                              p.initial_velocity[1],
+                              p.initial_velocity[2],
+                            ],
+                          }))
+                        }
+                      />
+                      <input
+                        type="number"
+                        value={explicitParams.initial_velocity[1]}
+                        onChange={(e) =>
+                          setExplicitParams((p) => ({
+                            ...p,
+                            initial_velocity: [
+                              p.initial_velocity[0],
+                              parseFloat(e.target.value) || 0,
+                              p.initial_velocity[2],
+                            ],
+                          }))
+                        }
+                      />
+                      <input
+                        type="number"
+                        value={explicitParams.initial_velocity[2]}
+                        onChange={(e) =>
+                          setExplicitParams((p) => ({
+                            ...p,
+                            initial_velocity: [
+                              p.initial_velocity[0],
+                              p.initial_velocity[1],
+                              parseFloat(e.target.value) || 0,
+                            ],
+                          }))
+                        }
+                      />
+                    </div>
+                  </label>
+                  <label className="field">
+                    <span>Yercekimi [mm/ms²] (0=kapali)</span>
+                    <input
+                      type="number"
+                      value={explicitParams.gravity}
+                      onChange={(e) =>
+                        setExplicitParams((p) => ({
+                          ...p,
+                          gravity: parseFloat(e.target.value) || 0,
+                        }))
+                      }
+                    />
+                  </label>
+                  <button
+                    className="btn primary full"
+                    onClick={handleExplicit}
+                    disabled={expliciting || !orStatus?.installed || constraints.length === 0}
+                  >
+                    {expliciting ? "OpenRadioss calisiyor..." : "Coz (Explicit Crash)"}
+                  </button>
+                  <p className="muted hint-small">
+                    Gmsh tetra mesh → .rad deck → Starter + Engine. Sonuc DB'ye kaydedilir.
+                  </p>
+                </div>
               </Section>
 
               <Section title="Veri Seti" badge={datasetRefresh > 0 ? "●" : undefined} defaultOpen={false}>
